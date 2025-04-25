@@ -2,11 +2,11 @@ CHISEL_BUILD_DIR = ./build/chisel
 
 ############################## Chisel Flow #############################
 test:
-	mill -i __.test.testOnly vitisrtlkernel.VitisRTLKernelTest
+	./mill -i __.test.testOnly vitisrtlkernel.VitisRTLKernelTest
 
 verilog:
 	mkdir -p $(CHISEL_BUILD_DIR)
-	mill -i chiselVitisTemplate.runMain --mainClass vitisrtlkernel.VitisRTLKernelVerilog -td $(CHISEL_BUILD_DIR)
+	./mill -i chiselVitisTemplate.runMain --mainClass vitisrtlkernel.VitisRTLKernelVerilog -td $(CHISEL_BUILD_DIR)
 
 help:
 	mill -i __.runMain --mainClass vitisrtlkernel.VitisRTLKernelVerilog --help
@@ -51,6 +51,14 @@ xclbin: $(KERNEL_XO) $(LINK_CFG)
 	--link $(KERNEL_XO) \
 	--config $(LINK_CFG) -o ./xo_kernel/$(XO).xclbin
 
+xclbin_emu: $(KERNEL_XO) $(LINK_CFG)
+	mkdir -p $(XCLBIN_TEMP_DIR)
+	mkdir -p $(XCLBIN_LOG_DIR)
+	mkdir -p $(XCLBIN_REPORT_DIR)
+	$(VPP) -t hw_emu \
+	--temp_dir $(XCLBIN_TEMP_DIR) --save-temps --log_dir $(XCLBIN_LOG_DIR) --report_dir $(XCLBIN_REPORT_DIR) \
+	--link $(KERNEL_XO) \
+	--config $(LINK_CFG) -o ./xo_kernel/$(XO).xclbin
 
 clean_vpp :
 	-rm -rf $(XCLBIN_TEMP_DIR)
@@ -75,10 +83,13 @@ LDFLAGS += -I$(HOST_INCLUDE) -I$(XILINX_XRT)/include -L$(XILINX_XRT)/lib -lxrt_c
 
 host: $(HOST_SRC)
 	mkdir -p $(HOST_BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(HOST_SRC) -o $(HOST_EXECUTABLE)
+	$(CXX) $(CXXFLAGS) $(HOST_SRC) -o $(HOST_EXECUTABLE) $(LDFLAGS)
 
 run: host $(HOST_EXECUTABLE)
 	$(HOST_EXECUTABLE) ./xo_kernel/$(XCLBIN).xclbin
+
+run_emu: host $(HOST_EXECUTABLE)
+	XCL_EMULATION_MODE=hw_emu $(HOST_EXECUTABLE) ./xo_kernel/$(XCLBIN).xclbin
 
 DEV_XVC_PUB := /dev/xvc_pub.u0
 hw_debug:

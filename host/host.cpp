@@ -25,7 +25,7 @@ int main(int argc, char **args)
     auto xclbin_uuid = device.load_xclbin(xclbin_path);
 
     // instantiate kernel
-    auto krnl = xrt::kernel(device, xclbin_uuid, "chisel_vecadd");
+    auto krnl = xrt::kernel(device, xclbin_uuid, "rtl_kernel_wizard_0");
 
     wait_for_enter("setup ila and [Enter] to continue...");
 
