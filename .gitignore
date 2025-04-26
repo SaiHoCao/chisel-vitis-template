@@ -349,3 +349,4 @@ vitis_pid*.str
 *.jou
 
 *.xclbin*
+*.ltx

@@ -35,3 +35,6 @@ vitis #启动IDE
     .dataIF_m00Write_b_ready      (m00_axi_bready),
     .dataIF_m00Write_b_valid      (m00_axi_bvalid)
   );
+
+
+make 
