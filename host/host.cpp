@@ -77,46 +77,59 @@ int main(int argc, char **args)
     auto xclbin_uuid = device.load_xclbin(xclbin_path);
 
     // instantiate kernel
-    auto krnl = xrt::kernel(device, xclbin_uuid, "chisel_vecmul");
+    auto krnl = xrt::kernel(device, xclbin_uuid, "chisel_matmul");
 
     wait_for_enter("setup ila and [Enter] to continue...");
 
-    // 定义向量大小
-    const size_t VECTOR_SIZE = 32;
-    const size_t TOTAL_SIZE = VECTOR_SIZE * 2; // 两个向量的总大小
+    // 定义矩阵大小
+    const size_t MATRIX_SIZE = 16;  // 16x16的矩阵
+    const size_t TOTAL_SIZE = MATRIX_SIZE * MATRIX_SIZE * 2; // 两个矩阵的总大小
     
     // 分配内存
-    uint32_t input_data[TOTAL_SIZE];  // 存储两个向量
-    uint32_t output_data[1];          // 存储点积结果
+    uint32_t input_data[TOTAL_SIZE];  // 存储两个矩阵
+    uint32_t output_data[MATRIX_SIZE * MATRIX_SIZE];  // 存储结果矩阵
     
     // 生成测试数据
-    for(size_t i = 0; i < VECTOR_SIZE; i++) {
-        input_data[i] = i % 10;           // 向量A
-        input_data[i + VECTOR_SIZE] = i % 10;  // 向量B
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            // 矩阵A
+            input_data[i * MATRIX_SIZE + j] = (i + j) % 10;
+            // 矩阵B
+            input_data[MATRIX_SIZE * MATRIX_SIZE + i * MATRIX_SIZE + j] = (i * j) % 10;
+        }
     }
     
-    // 计算期望结果（点积）
-    uint32_t expected_result = 0;
-    for(size_t i = 0; i < VECTOR_SIZE; i++) {
-        expected_result += input_data[i] * input_data[i + VECTOR_SIZE];
+    // 计算期望结果（矩阵乘法）
+    uint32_t expected_result[MATRIX_SIZE][MATRIX_SIZE] = {0};
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            for(size_t k = 0; k < MATRIX_SIZE; k++) {
+                expected_result[i][j] += input_data[i * MATRIX_SIZE + k] * 
+                                       input_data[MATRIX_SIZE * MATRIX_SIZE + k * MATRIX_SIZE + j];
+            }
+        }
     }
     
     // 打印输入数据
-    std::cout << "Vector A: ";
-    for(size_t i = 0; i < VECTOR_SIZE; i++) {
-        std::cout << input_data[i] << " ";
+    std::cout << "Matrix A:" << std::endl;
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            std::cout << input_data[i * MATRIX_SIZE + j] << " ";
+        }
+        std::cout << std::endl;
     }
-    std::cout << std::endl;
     
-    std::cout << "Vector B: ";
-    for(size_t i = 0; i < VECTOR_SIZE; i++) {
-        std::cout << input_data[i + VECTOR_SIZE] << " ";
+    std::cout << "\nMatrix B:" << std::endl;
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            std::cout << input_data[MATRIX_SIZE * MATRIX_SIZE + i * MATRIX_SIZE + j] << " ";
+        }
+        std::cout << std::endl;
     }
-    std::cout << std::endl;
     
     // allocate buffer on board
     auto read_buffer = xrt::bo(device, TOTAL_SIZE * sizeof(uint32_t), krnl.group_id(1));
-    auto write_buffer = xrt::bo(device, sizeof(uint32_t), krnl.group_id(2));
+    auto write_buffer = xrt::bo(device, MATRIX_SIZE * MATRIX_SIZE * sizeof(uint32_t), krnl.group_id(2));
     
     // 输入数据传输到 board
     read_buffer.write(input_data);
@@ -131,10 +144,35 @@ int main(int argc, char **args)
     write_buffer.read(output_data);
 
     // 打印结果
-    std::cout << "Expected result: " << expected_result << std::endl;
-    std::cout << "Actual result: " << output_data[0] << std::endl;
+    std::cout << "\nExpected result:" << std::endl;
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            std::cout << expected_result[i][j] << " ";
+        }
+        std::cout << std::endl;
+    }
+    
+    std::cout << "\nActual result:" << std::endl;
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            std::cout << output_data[i * MATRIX_SIZE + j] << " ";
+        }
+        std::cout << std::endl;
+    }
 
     // 验证结果
-    assert(expected_result == output_data[0]);
+    bool all_correct = true;
+    for(size_t i = 0; i < MATRIX_SIZE; i++) {
+        for(size_t j = 0; j < MATRIX_SIZE; j++) {
+            if(expected_result[i][j] != output_data[i * MATRIX_SIZE + j]) {
+                std::cout << "Error at position (" << i << ", " << j << "): "
+                          << "Expected " << expected_result[i][j] 
+                          << ", Actual " << output_data[i * MATRIX_SIZE + j] << std::endl;
+                all_correct = false;
+            }
+        }
+    }
+    
+    assert(all_correct);
     std::cout << "Test passed!" << std::endl;
 }

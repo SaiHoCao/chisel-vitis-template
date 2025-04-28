@@ -26,6 +26,8 @@ class VitisRTLKernel extends RawModule {
   val ap_clk   = IO(Input(Clock()))
   val reset_asyncReset = Wire(new AsyncReset)
   // Step2: Instantiate your kernel here
+  // val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new VecAdd))
+  // val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new VecMul))
   val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new VecAdd))
 
   // !! DO NOT modify code below !!
