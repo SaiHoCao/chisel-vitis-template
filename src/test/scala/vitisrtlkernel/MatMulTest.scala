@@ -7,7 +7,7 @@ import scala.util.Random
 
 class MatMulOptTest extends AnyFreeSpec with ChiselScalatestTester {
   "MatMul should correctly multiply two matrices" in {
-    test(new MatMulOpt(64)) { dut =>
+    test(new MatMulOpt(32)) { dut =>
       val rand = new Random()
       val n    = 16 // 矩阵大小
       dut.clock.setTimeout(10000)

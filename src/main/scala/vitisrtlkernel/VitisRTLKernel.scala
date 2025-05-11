@@ -14,6 +14,7 @@ class VitisRTLKernelDataIF extends Bundle {
   val readLength = Input(UInt(64.W))
   val writeAddress = Input(UInt(64.W))
   // add your register args here...
+  val matrixSize = Input(UInt(64.W))
 
   // HBM/DDR ports
   val m00Read  = new VitisAXIReadMaster(64, 512)
@@ -28,7 +29,7 @@ class VitisRTLKernel extends RawModule {
   // Step2: Instantiate your kernel here
   // val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new VecAdd))
   // val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new VecMul))
-  val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new VecAdd))
+  val kernel = withClockAndReset(ap_clk, reset_asyncReset)(Module(new MatMul))
 
   // !! DO NOT modify code below !!
   val ap_start = IO(Input(Bool()))

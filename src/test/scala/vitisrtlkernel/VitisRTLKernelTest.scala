@@ -237,6 +237,7 @@ class VitisRTLKernelTest_MatMul extends AnyFreeSpec with ChiselScalatestTester {
           dut.io.dataIF.readAddress.poke(readAddress.U)
           dut.io.dataIF.readLength.poke((matrixSize * matrixSize * 4 * 2 / 64).U) // 每个矩阵matrixSize*matrixSize个元素，每个元素4字节，两个矩阵
           dut.io.dataIF.writeAddress.poke(writeAddress.U)
+          dut.io.dataIF.matrixSize.poke(matrixSize.U)
           dut.io.ap_start.poke(false.B)
           dut.clock.step(2)
           dut.io.ap_start.poke(true.B)

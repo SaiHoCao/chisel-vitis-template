@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import vitisrtlkernel.mmstream._
 
-class MatMul(size: Int = 16) extends Module {
+class MatMul(maxSize: Int = 32) extends Module {
   // kernel的IO接口定义
   val io = IO(new Bundle {
     val dataIF = (new VitisRTLKernelDataIF) // 数据接口，包含读写通道
@@ -14,8 +14,8 @@ class MatMul(size: Int = 16) extends Module {
   // 计算实际的矩阵大小
   // readLength * 64 是总字节数，除以4得到32位元素个数，除以2得到单个矩阵的元素个数
   // 然后开平方得到矩阵维度
-  val matrixSize = RegInit(0.U(32.W))
-  val matrixSizeValid = RegInit(false.B)
+  val matrixSize = RegInit(0.U(64.W))
+
 
   // 读写请求控制寄存器，用于跟踪读写请求的状态
   val readReqIssued_reg  = RegInit(false.B) // 读请求已发出标志，初始为false
@@ -26,8 +26,8 @@ class MatMul(size: Int = 16) extends Module {
   val s2mm_module = Module(new S2MM(64, 512)) // 流到内存转换模块，64位地址，512位数据
 
   // 实例化MaMulOpt模块，使用传入的size参数
-  val MatMulOpt = Module(new MatMulOpt(n = size))
-  MatMulOpt.io.matrixSize := matrixSize // 连接动态计算的矩阵大小
+  val MatMulOpt = Module(new MatMulOpt(n = maxSize))
+  MatMulOpt.io.matrixSize := io.dataIF.matrixSize
 
   // AXI接口连接
   mm2s_module.io.axiRead <> io.dataIF.m00Read // 连接读通道
@@ -58,15 +58,15 @@ class MatMul(size: Int = 16) extends Module {
   // 数据队列和向量寄存器
   val queueDepth   = 16 // 队列深度
   val dataQueue    = Module(new Queue(Vec(16, UInt(32.W)), queueDepth))
-  val matrixA      = Reg(Vec(size, Vec(size, UInt(32.W)))) // 存储第一个矩阵
-  val matrixB      = Reg(Vec(size, Vec(size, UInt(32.W)))) // 存储第二个矩阵
+  val matrixA      = Reg(Vec(maxSize, Vec(maxSize, UInt(32.W)))) // 存储第一个矩阵
+  val matrixB      = Reg(Vec(maxSize, Vec(maxSize, UInt(32.W)))) // 存储第二个矩阵
   val rowCount     = RegInit(0.U(32.W)) // 行计数器
   val colCount     = RegInit(0.U(32.W)) // 列计数器
   val last_reg     = RegInit(false.B) // 最后一个数据标志
   val matrixReady  = RegInit(false.B) // 矩阵数据准备就绪标志
 
   // 状态定义
-  val sIdle :: sCalcSize :: sReadA :: sReadB :: sCompute :: sWrite :: Nil = Enum(6)
+  val sIdle :: sReadA :: sReadB :: sCompute :: sWrite :: Nil = Enum(6)
   val state = RegInit(sIdle)
 
   // 流控制信号
@@ -91,17 +91,11 @@ class MatMul(size: Int = 16) extends Module {
   switch(state) {
     is(sIdle) {
       when(readReqIssued_reg) {
-        state := sCalcSize
+        rowCount := 0.U
+        colCount := 0.U
+        matrixSize := io.dataIF.matrixSize
+        state := sReadA
       }
-    }
-    is(sCalcSize) {
-      // 计算矩阵大小：readLength * 64 / 4 / 2 得到单个矩阵的元素个数，然后开平方
-      val totalElements = (io.dataIF.readLength * 64.U) / 4.U / 2.U
-      matrixSize := (totalElements >> 1.U) // 简单的开平方近似，实际应该使用更精确的方法
-      matrixSizeValid := true.B
-      rowCount := 0.U
-      colCount := 0.U
-      state := sReadA
     }
     is(sReadA) {
       // 从MM2S读取数据到Queue
@@ -113,11 +107,11 @@ class MatMul(size: Int = 16) extends Module {
       when(dataQueue.io.deq.valid) {
         dataQueue.io.deq.ready := true.B
         for (i <- 0 until 16) {
-          val idx = rowCount * matrixSize + colCount + i.U
-          val row = idx / matrixSize
-          val col = idx % matrixSize
+          val row = rowCount
+          val col = colCount + i.U
           when(row < matrixSize && col < matrixSize) {
             matrixA(row)(col) := dataQueue.io.deq.bits(i)
+            printf(p"matrixA($row)($col): ${dataQueue.io.deq.bits(i)}\n")
           }
         }
         colCount := colCount + 16.U
@@ -145,11 +139,11 @@ class MatMul(size: Int = 16) extends Module {
       when(dataQueue.io.deq.valid) {
         dataQueue.io.deq.ready := true.B
         for (i <- 0 until 16) {
-          val idx = rowCount * matrixSize + colCount + i.U
-          val row = idx / matrixSize
-          val col = idx % matrixSize
+          val row = rowCount
+          val col = colCount + i.U
           when(row < matrixSize && col < matrixSize) {
             matrixB(row)(col) := dataQueue.io.deq.bits(i)
+            printf(p"matrixB($row)($col): ${dataQueue.io.deq.bits(i)}\n")
           }
         }
         colCount := colCount + 16.U
@@ -218,13 +212,13 @@ class MatMul(size: Int = 16) extends Module {
   }
 }
 
-class MatMulOpt(n: Int = 64) extends Module {
+class MatMulOpt(n: Int = 32) extends Module {
   // IO接口定义
   val io = IO(new Bundle {
     val in1 = Flipped(Decoupled(Vec(n, Vec(n, UInt(32.W))))) // 第一个输入矩阵
     val in2 = Flipped(Decoupled(Vec(n, Vec(n, UInt(32.W))))) // 第二个输入矩阵
     val out = Decoupled(Vec(n, Vec(n, UInt(32.W)))) // 输出矩阵
-    val matrixSize = Input(UInt(32.W)) // 添加矩阵大小输入
+    val matrixSize = Input(UInt(64.W)) // 添加矩阵大小输入
   })
 
   // ready信号
