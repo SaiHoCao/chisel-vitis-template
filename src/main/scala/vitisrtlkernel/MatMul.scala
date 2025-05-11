@@ -11,6 +11,12 @@ class MatMul(size: Int = 16) extends Module {
     val done   = Output(Bool()) // 完成信号
   })
 
+  // 计算实际的矩阵大小
+  // readLength * 64 是总字节数，除以4得到32位元素个数，除以2得到单个矩阵的元素个数
+  // 然后开平方得到矩阵维度
+  val matrixSize = RegInit(0.U(32.W))
+  val matrixSizeValid = RegInit(false.B)
+
   // 读写请求控制寄存器，用于跟踪读写请求的状态
   val readReqIssued_reg  = RegInit(false.B) // 读请求已发出标志，初始为false
   val writeReqIssued_reg = RegInit(false.B) // 写请求已发出标志，初始为false
@@ -21,6 +27,7 @@ class MatMul(size: Int = 16) extends Module {
 
   // 实例化MaMulOpt模块，使用传入的size参数
   val MatMulOpt = Module(new MatMulOpt(n = size))
+  MatMulOpt.io.matrixSize := matrixSize // 连接动态计算的矩阵大小
 
   // AXI接口连接
   mm2s_module.io.axiRead <> io.dataIF.m00Read // 连接读通道
@@ -53,15 +60,14 @@ class MatMul(size: Int = 16) extends Module {
   val dataQueue    = Module(new Queue(Vec(16, UInt(32.W)), queueDepth))
   val matrixA      = Reg(Vec(size, Vec(size, UInt(32.W)))) // 存储第一个矩阵
   val matrixB      = Reg(Vec(size, Vec(size, UInt(32.W)))) // 存储第二个矩阵
-  // val resultMatrix = Reg(Vec(size, Vec(size, UInt(32.W)))) // 存储结果矩阵
   val rowCount     = RegInit(0.U(32.W)) // 行计数器
   val colCount     = RegInit(0.U(32.W)) // 列计数器
   val last_reg     = RegInit(false.B) // 最后一个数据标志
   val matrixReady  = RegInit(false.B) // 矩阵数据准备就绪标志
 
   // 状态定义
-  val sIdle :: sReadA :: sReadB :: sCompute :: sWrite :: Nil = Enum(5)
-  val state                                                  = RegInit(sIdle)
+  val sIdle :: sCalcSize :: sReadA :: sReadB :: sCompute :: sWrite :: Nil = Enum(6)
+  val state = RegInit(sIdle)
 
   // 流控制信号
   mm2s_module.io.streamOut.ready    := false.B
@@ -85,36 +91,42 @@ class MatMul(size: Int = 16) extends Module {
   switch(state) {
     is(sIdle) {
       when(readReqIssued_reg) {
-        rowCount := 0.U
-        colCount := 0.U
-        state    := sReadA
+        state := sCalcSize
       }
+    }
+    is(sCalcSize) {
+      // 计算矩阵大小：readLength * 64 / 4 / 2 得到单个矩阵的元素个数，然后开平方
+      val totalElements = (io.dataIF.readLength * 64.U) / 4.U / 2.U
+      matrixSize := (totalElements >> 1.U) // 简单的开平方近似，实际应该使用更精确的方法
+      matrixSizeValid := true.B
+      rowCount := 0.U
+      colCount := 0.U
+      state := sReadA
     }
     is(sReadA) {
       // 从MM2S读取数据到Queue
       mm2s_module.io.streamOut.ready := dataQueue.io.enq.ready
       dataQueue.io.enq.valid         := mm2s_module.io.streamOut.valid
       dataQueue.io.enq.bits          := mm2s_module.io.streamOut.bits.data.asTypeOf(Vec(16, UInt(32.W)))
-      // printf(p"dataQueue.io.enq.bits: $dataQueue.io.enq.bits")
+
       // 从Queue读取数据到matrixA
       when(dataQueue.io.deq.valid) {
         dataQueue.io.deq.ready := true.B
         for (i <- 0 until 16) {
-          val idx = rowCount * size.U + colCount + i.U
-          val row = idx / size.U
-          val col = idx % size.U
-          when(row < size.U && col < size.U) {
+          val idx = rowCount * matrixSize + colCount + i.U
+          val row = idx / matrixSize
+          val col = idx % matrixSize
+          when(row < matrixSize && col < matrixSize) {
             matrixA(row)(col) := dataQueue.io.deq.bits(i)
-            printf(p"matrixA($row)($col): ${dataQueue.io.deq.bits(i)}\n")
           }
         }
         colCount := colCount + 16.U
 
         // 检查是否读取完matrixA的所有数据
-        when(colCount + 16.U >= size.U) {
+        when(colCount + 16.U >= matrixSize) {
           colCount := 0.U
           rowCount := rowCount + 1.U
-          when(rowCount + 1.U >= size.U) {
+          when(rowCount + 1.U >= matrixSize) {
             rowCount := 0.U
             colCount := 0.U
             printf(p"matrixA Read Done\n")
@@ -133,20 +145,20 @@ class MatMul(size: Int = 16) extends Module {
       when(dataQueue.io.deq.valid) {
         dataQueue.io.deq.ready := true.B
         for (i <- 0 until 16) {
-          val idx = rowCount * size.U + colCount + i.U
-          val row = idx / size.U
-          val col = idx % size.U
-          when(row < size.U && col < size.U) {
+          val idx = rowCount * matrixSize + colCount + i.U
+          val row = idx / matrixSize
+          val col = idx % matrixSize
+          when(row < matrixSize && col < matrixSize) {
             matrixB(row)(col) := dataQueue.io.deq.bits(i)
           }
         }
         colCount := colCount + 16.U
 
         // 检查是否读取完matrixB的所有数据
-        when(colCount + 16.U >= size.U) {
+        when(colCount + 16.U >= matrixSize) {
           colCount := 0.U
           rowCount := rowCount + 1.U
-          when(rowCount + 1.U >= size.U) {
+          when(rowCount + 1.U >= matrixSize) {
             rowCount := 0.U
             colCount := 0.U
             printf(p"matrixB Read Done\n")
@@ -164,19 +176,17 @@ class MatMul(size: Int = 16) extends Module {
     is(sWrite) {
       when(MatMulOpt.io.out.valid) {
         printf(p"sWrite\n")
-        // resultMatrix := MatMulOpt.io.out.bits
         // 准备要写入的数据
         val writeData = Wire(Vec(16, UInt(32.W)))
 
         // 计算当前要写入的16个元素的位置
         for (i <- 0 until 16) {
-          val idx = rowCount * size.U + colCount + i.U
-          val row = idx / size.U
-          val col = idx % size.U
+          val idx = rowCount * matrixSize + colCount + i.U
+          val row = idx / matrixSize
+          val col = idx % matrixSize
           printf(p"row: $row, col: $col\n")
-          when(row < size.U && col < size.U) {
+          when(row < matrixSize && col < matrixSize) {
             writeData(i) := MatMulOpt.io.out.bits(row)(col)
-            // printf(p"writeData($i): ${writeData(i)}, resultMatrix($row)($col): ${resultMatrix(row)(col)},MatMulOpt.io.out.bits: ${MatMulOpt.io.out.bits(row)(col)}\n")
           }.otherwise {
             writeData(i) := 0.U
           }
@@ -185,18 +195,18 @@ class MatMul(size: Int = 16) extends Module {
         // 写入数据
         s2mm_module.io.streamIn.valid     := true.B
         s2mm_module.io.streamIn.bits.data := writeData.asTypeOf(s2mm_module.io.streamIn.bits.data)
-        s2mm_module.io.streamIn.bits.last := (colCount + 16.U >= size.U) && (rowCount + 1.U >= size.U)
+        s2mm_module.io.streamIn.bits.last := (colCount + 16.U >= matrixSize) && (rowCount + 1.U >= matrixSize)
 
         when(s2mm_module.io.streamIn.ready) {
           colCount := colCount + 16.U
 
           // 检查是否需要换行
-          when(colCount + 16.U >= size.U) {
+          when(colCount + 16.U >= matrixSize) {
             colCount := 0.U
             rowCount := rowCount + 1.U
 
             // 检查是否所有数据都已写入
-            when(rowCount + 1.U >= size.U) {
+            when(rowCount + 1.U >= matrixSize) {
               rowCount := 0.U
               colCount := 0.U
               state    := sIdle
@@ -214,6 +224,7 @@ class MatMulOpt(n: Int = 64) extends Module {
     val in1 = Flipped(Decoupled(Vec(n, Vec(n, UInt(32.W))))) // 第一个输入矩阵
     val in2 = Flipped(Decoupled(Vec(n, Vec(n, UInt(32.W))))) // 第二个输入矩阵
     val out = Decoupled(Vec(n, Vec(n, UInt(32.W)))) // 输出矩阵
+    val matrixSize = Input(UInt(32.W)) // 添加矩阵大小输入
   })
 
   // ready信号
@@ -288,7 +299,7 @@ class MatMulOpt(n: Int = 64) extends Module {
       // 准备分块数据
       for (i <- 0 until blkSize) {
         val idx = blkCnt * blkSize.U + i.U
-        when(idx < n.U) {
+        when(idx < io.matrixSize) {
           in1_slice(i) := in1_reg(rowCnt)(idx)
           in2_slice(i) := in2_reg(idx)(colCnt)
         }
@@ -316,15 +327,15 @@ class MatMulOpt(n: Int = 64) extends Module {
       printf(p"Current Col: $colCnt")
       printf(p"Current Block: $blkCnt")
       printf(p"accumulator: $accumulator\n")
-      when(blkCnt === (numBlks - 1).U) {
+      when(blkCnt === (io.matrixSize / blkSize.U - 1.U)) {
         // 当前行列计算完成
         out_reg(rowCnt)(colCnt) := accumulator
         printf(p"out_reg($rowCnt)($colCnt): $accumulator\n")
         accumulator             := 0.U
         blkCnt                  := 0.U
         // 更新行列计数器
-        when(colCnt === (n - 1).U) {
-          when(rowCnt === (n - 1).U) {
+        when(colCnt === (io.matrixSize - 1.U)) {
+          when(rowCnt === (io.matrixSize - 1.U)) {
             // 所有元素计算完成
             printf(p"\n=== Done State ===")
             printf(p"Current Row: $rowCnt")
