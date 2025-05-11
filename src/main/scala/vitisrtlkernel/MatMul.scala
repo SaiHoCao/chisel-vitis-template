@@ -66,7 +66,7 @@ class MatMul(maxSize: Int = 32) extends Module {
   val matrixReady  = RegInit(false.B) // 矩阵数据准备就绪标志
 
   // 状态定义
-  val sIdle :: sReadA :: sReadB :: sCompute :: sWrite :: Nil = Enum(6)
+  val sIdle :: sReadA :: sReadB :: sCompute :: sWrite :: Nil = Enum(5)
   val state = RegInit(sIdle)
 
   // 流控制信号
