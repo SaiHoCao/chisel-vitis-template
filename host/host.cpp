@@ -77,7 +77,7 @@ int main(int argc, char **args)
     auto xclbin_uuid = device.load_xclbin(xclbin_path);
 
     // instantiate kernel
-    auto krnl = xrt::kernel(device, xclbin_uuid, "chisel_matmul");
+    auto krnl = xrt::kernel(device, xclbin_uuid, "vecmul_size");
 
     wait_for_enter("setup ila and [Enter] to continue...");
 
@@ -136,7 +136,7 @@ int main(int argc, char **args)
     read_buffer.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
     // 调用kernel，参数为读取长度（以64字节为单位）
-    auto run = krnl(TOTAL_SIZE * sizeof(uint32_t) / 64, read_buffer, write_buffer);
+    auto run = krnl(TOTAL_SIZE * sizeof(uint32_t) / 64, read_buffer, write_buffer,MATRIX_SIZE);
     run.wait();
 
     // 计算结果从 board read 回 host
